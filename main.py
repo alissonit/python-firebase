@@ -19,6 +19,30 @@ class ManagedRemoteConfigService():
         self.REMOTE_CONFIG_URL = self.BASE_URL + '/' + self.REMOTE_CONFIG_ENDPOINT
         self.SCOPES = ['https://www.googleapis.com/auth/firebase.remoteconfig']
 
+    def _rollback(self, version):
+        """Roll back to an available version of Firebase Remote Config template.
+
+        :param version: The version of the template to roll back to.
+        """
+        headers = {
+            'Authorization': 'Bearer ' + self._get_access_token()
+        }
+
+        json = {
+            "versionNumber": version
+        }
+
+        rollback_url = f"{self.REMOTE_CONFIG_URL}:rollback"
+        resp = requests.post(rollback_url, headers=headers, json=json)
+
+        if resp.status_code == 200:
+            print('Rolled back to version: ' + version)
+            print(resp.text)
+            print('ETag from server: {}'.format(resp.headers['ETag']))
+        else:
+            print('Request to roll back to version ' + version + ' failed.')
+            print(resp.text)
+
     def _get_access_token(self):
         """Retrieve a valid access token that can be used to authorize requests.
 
@@ -30,24 +54,40 @@ class ManagedRemoteConfigService():
 
         return access_token_info.access_token
 
-    def alter_parameter_key(self, data: dict):
-        """Alter the parameter keys in the Remote Config template.
-        :param data: The Remote Config template data.
-        :return: The modified Remote Config template data.
+    def update_parameter_group(self, remote_config_current: dict, scenario: str, banner_option: str) -> str:
+        """Update the Remote Config template with the specified banner option.
+
+        :param remote_config_current: The current Remote Config template.
+        :param scenario: The scenario for which the banner option is to be retrieved.
+        :param banner_option: The banner option to be set, either 'enable' or 'disable'.
+        :return: The updated Remote Config template with the banner option set.
         """
 
-        if 'parameters' in data:
-            for key in data['parameters'].keys():
-                if key == 'test':
-                    data['parameters'][key]['defaultValue'] = {
-                        'value': 'prod3'}
-                    logger.info(f'Updated parameter {key} to prod3')
-        return data
+        if banner_option is None:
+            raise ValueError("banner_type must be provided")
+
+        if banner_option == "disable":
+            config_file = f'{scenario}_disabled.json'
+        elif banner_option == "enable":
+            config_file = f'{scenario}_enabled.json'
+        else:
+            raise ValueError(
+                "Invalid banner_type. Must be 'disable' or 'enable'.")
+
+        with open(config_file, 'r') as f:
+            data = json.load(f)
+
+            for group, group_data in data.get('parameterGroups', {}).items():
+                # update remote config current with the new values
+                remote_config_current['parameterGroups'][group] = group_data
+
+            return remote_config_current
 
     def _save_remote_config(self, response: dict):
         """Save the Remote Config template to a local file.
 
-        :param template: The Remote Config template to save.
+        :param response: The response from the Remote Config API containing the template.
+        :return: The name of the file where the template is saved.
         """
 
         timestamp = datetime.now().strftime('%Y%m%d%H%M')
@@ -88,23 +128,34 @@ class ManagedRemoteConfigService():
                 'Error retrieving template: {}'.format(resp.status_code))
             logger.error('Response: {}'.format(resp.text))
 
-    def update_remote_config(self, remote_config_file: str, etag: str = None):
+    def update_remote_config(self, remote_config_file: str, etag: str, scenario: str, banner_option: str):
         """Update the Firebase Remote Config template on server.
 
-        Update the Firebase Remote Config template on server.
+        :param remote_config_file: The local file containing the Remote Config template.
+        :param etag: The ETag of the current Remote Config template.
+        :param scenario: The scenario for which the banner option is to be updated.
+        :param banner_option: The banner option to be set, either 'enable' or 'disable'.
         """
         headers = {
             'Authorization': 'Bearer ' + self._get_access_token(),
             'Content-Type': 'application/json',
-            'If-Match': etag if etag else ''
+            'If-Match': etag
         }
 
-        with open(remote_config_file, 'rb') as f:
+        with open(remote_config_file, 'rb') as file:
 
-            data = self.alter_parameter_key(data=json.load(f))
+            remote_config_file = json.load(file)
+            data = self.update_parameter_group(
+                remote_config_current=remote_config_file, scenario=scenario, banner_option=banner_option)
+            if data is None:
+                logger.error(
+                    'No data found for the given scenario and banner option.')
+                raise ValueError(
+                    'No data found for the given scenario and banner option.')
+            
 
             resp = requests.put(self.REMOTE_CONFIG_URL,
-                                headers=headers, data=json.dumps(data))
+                                 headers=headers, data=json.dumps(data))
 
         if resp.status_code == 200:
             logger.info('Updated template successfully')
@@ -118,5 +169,16 @@ class ManagedRemoteConfigService():
 if __name__ == '__main__':
     logging.basicConfig(level=logging.INFO)
     remote_config_service = ManagedRemoteConfigService()
-    etag, config_file = remote_config_service.get_remote_config()
-    remote_config_service.update_remote_config(config_file, etag=etag)
+
+    rollback = False
+    if rollback is True:
+        # Example rollback to version 1
+        version_to_rollback = "21"
+        remote_config_service._rollback(version_to_rollback)
+    else:
+        etag, config_file = remote_config_service.get_remote_config()
+        scenario = 'scenario1'
+        banner_option = 'disable'  # or 'enable'
+        remote_config_service.update_remote_config(
+            config_file, etag=etag, scenario=scenario, banner_option=banner_option)
+        logger.info('Remote config update process completed.')

@@ -1,0 +1,20 @@
+{
+    "parameterGroups": {
+        "mobile": {
+            "parameters": {
+                "banner_principal": {
+                    "defaultValue": {
+                        "value": "false"
+                    },
+                    "valueType": "BOOLEAN"
+                },
+                "login": {
+                    "defaultValue": {
+                        "value": "false"
+                    },
+                    "valueType": "BOOLEAN"
+                }
+            }
+        }
+    }
+}
